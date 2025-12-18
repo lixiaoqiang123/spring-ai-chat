@@ -110,7 +110,7 @@ public class ChatController {
             ChatRequest requestWithSession = new ChatRequest(request.message(), sessionId);
 
             // 调用增强版流式服务,返回类型化的数据块流
-            Flux<StreamChunk> chunkStream = chatService.chatStre/amEnhanced(requestWithSession);
+            Flux<StreamChunk> chunkStream = chatService.chatStreamEnhanced(requestWithSession);
 
             // 将 StreamChunk 流转换为 SSE 格式
             return chunkStream
