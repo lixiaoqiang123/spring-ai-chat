@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spring AI Chat - 流式响应测试</title>
+    <!-- Markdown 渲染库 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 800px;
+            width: 100%;
+            padding: 30px;
+        }
+
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .chat-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 20px;
+            min-height: 400px;
+            max-height: 500px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            line-height: 1.6;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .user-message {
+            background: #667eea;
+            color: white;
+            margin-left: 20%;
+            text-align: right;
+        }
+
+        .ai-message {
+            background: white;
+            color: #333;
+            margin-right: 20%;
+            border: 1px solid #e0e0e0;
+        }
+
+        .typing-indicator {
+            display: inline-block;
+            padding: 5px;
+        }
+
+        .typing-indicator span {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #667eea;
+            margin: 0 2px;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+
+        .input-area {
+            display: flex;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            flex: 1;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            padding: 15px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s, transform 0.1s;
+        }
+
+        button:hover {
+            background: #5568d3;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .info-box {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            padding: 12px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 14px;
+            color: #1976d2;
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            border-left: 4px solid #c62828;
+        }
+
+        .session-id {
+            font-size: 12px;
+            color: #999;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        /* 思考过程容器样式 */
+        .reasoning-container {
+            background: linear-gradient(135deg, #f0f4ff 0%, #f9f9fb 100%);
+            border-left: 4px solid #667eea;
+            margin-bottom: 12px;
+            padding: 12px;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(102, 126, 234, 0.08);
+        }
+
+        .reasoning-header {
+            font-weight: 600;
+            color: #667eea;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            user-select: none;
+            font-size: 13px;
+        }
+
+        .reasoning-toggle {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            transition: transform 0.2s;
+        }
+
+        .reasoning-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .reasoning-content {
+            color: #555;
+            font-size: 13px;
+            line-height: 1.6;
+            word-break: break-word;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            background: rgba(255, 255, 255, 0.6);
+            padding: 8px;
+            border-radius: 4px;
+        }
+
+        /* Markdown 样式 */
+        .reasoning-content p {
+            margin: 0.5em 0;
+        }
+
+        .reasoning-content code {
+            background: rgba(0, 0, 0, 0.05);
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        }
+
+        /* think 标签样式 */
+        .think-tag {
+            display: block;
+            background: rgba(102, 126, 234, 0.08);
+            border-left: 3px solid #667eea;
+            padding: 10px 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-style: italic;
+            color: #555;
+        }
+
+        .think-tag::before {
+            content: '💭 思考：';
+            font-weight: 600;
+            color: #667eea;
+            font-style: normal;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .reasoning-content pre {
+            background: rgba(0, 0, 0, 0.05);
+            padding: 8px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        .reasoning-content strong {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .reasoning-content em {
+            font-style: italic;
+        }
+
+        .ai-content {
+            line-height: 1.6;
+        }
+
+        /* AI 回复内容的 Markdown 样式 */
+        .ai-content p {
+            margin: 0.5em 0;
+        }
+
+        .ai-content code {
+            background: rgba(102, 126, 234, 0.1);
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            color: #667eea;
+        }
+
+        .ai-content pre {
+            background: rgba(102, 126, 234, 0.05);
+            padding: 12px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+
+        .ai-content pre code {
+            background: none;
+            padding: 0;
+            color: inherit;
+        }
+
+        .ai-content strong {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .ai-content em {
+            font-style: italic;
+        }
+
+        .ai-content ul, .ai-content ol {
+            margin: 0.5em 0;
+            padding-left: 2em;
+        }
+
+        .ai-content li {
+            margin: 0.25em 0;
+        }
+
+        .ai-content blockquote {
+            border-left: 3px solid #667eea;
+            padding-left: 12px;
+            margin: 8px 0;
+            color: #666;
+        }
+
+        /* AI 回复中的 think 标签样式 */
+        .ai-content .think-tag {
+            display: block;
+            background: rgba(102, 126, 234, 0.08);
+            border-left: 3px solid #667eea;
+            padding: 10px 12px;
+            margin: 8px 0;
+            border-radius: 4px;
+            font-style: italic;
+            color: #555;
+        }
+
+        .ai-content .think-tag::before {
+            content: '💭 思考：';
+            font-weight: 600;
+            color: #667eea;
+            font-style: normal;
+            display: block;
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Spring AI Chat 流式响应</h1>
+    <p class="subtitle">使用 Server-Sent Events (SSE) 实现实时流式对话</p>
+
+    <div class="info-box">
+        <strong>功能特性:</strong>
+        <ul style="margin-left: 20px; margin-top: 5px;">
+            <li>实时流式响应,逐字显示AI回复</li>
+            <li>使用Spring AI的stream()方法</li>
+            <li>响应式编程(Reactor Flux)</li>
+            <li>自动会话管理</li>
+            <li style="color: #2196f3; font-weight: 600;">✨ 支持思考过程显示（GLM-4.6）</li>
+        </ul>
+    </div>
+
+    <div class="chat-box" id="chatBox"></div>
+
+    <div class="input-area">
+        <input
+                type="text"
+                id="messageInput"
+                placeholder="输入您的问题..."
+                onkeypress="if(event.key==='Enter') sendMessage()"
+        />
+        <button onclick="sendMessage()" id="sendBtn">发送</button>
+    </div>
+
+    <div class="session-id" id="sessionInfo">会话ID: 未开始</div>
+</div>
+
+<script>
+    let sessionId = null;
+    let currentAiMessage = null;
+    let currentReasoningContainer = null;
+    let reasoningShown = false;
+
+    // 添加用户消息到聊��框
+    function addUserMessage(message) {
+        const chatBox = document.getElementById('chatBox');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message user-message';
+        messageDiv.textContent = message;
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // 创建AI消息容器
+    function createAiMessageContainer() {
+        const chatBox = document.getElementById('chatBox');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message ai-message';
+
+        // 创建思考内容容器（初始隐藏）
+        const reasoningContainer = document.createElement('div');
+        reasoningContainer.className = 'reasoning-container';
+        reasoningContainer.style.display = 'none';
+
+        const reasoningHeader = document.createElement('div');
+        reasoningHeader.className = 'reasoning-header';
+        reasoningHeader.innerHTML = '<span class="reasoning-toggle">▼</span><span>思考过程</span>';
+        // 使用箭头函数传递容器引用
+        reasoningHeader.onclick = function() {
+            toggleReasoning(reasoningContainer);
+        };
+
+        const reasoningContent = document.createElement('div');
+        reasoningContent.className = 'reasoning-content';
+
+        reasoningContainer.appendChild(reasoningHeader);
+        reasoningContainer.appendChild(reasoningContent);
+        messageDiv.appendChild(reasoningContainer);
+
+        // 创建回复内容区域
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'ai-content';
+
+        // 添加打字指示器
+        const typingIndicator = document.createElement('div');
+        typingIndicator.className = 'typing-indicator';
+        typingIndicator.innerHTML = '<span></span><span></span><span></span>';
+        contentDiv.appendChild(typingIndicator);
+
+        messageDiv.appendChild(contentDiv);
+
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+
+        currentReasoningContainer = reasoningContainer;
+        reasoningShown = false;
+        return messageDiv;
+    }
+
+    // 切换思考过程显示/隐藏
+    function toggleReasoning(reasoningContainer) {
+        if (!reasoningContainer) {
+            console.error('toggleReasoning: reasoningContainer is null');
+            return;
+        }
+
+        const toggle = reasoningContainer.querySelector('.reasoning-toggle');
+        const reasoningContent = reasoningContainer.querySelector('.reasoning-content');
+
+        if (!toggle || !reasoningContent) {
+            console.error('toggleReasoning: toggle or reasoningContent not found');
+            return;
+        }
+
+        if (reasoningContent.style.display === 'none') {
+            reasoningContent.style.display = 'block';
+            toggle.classList.remove('collapsed');
+        } else {
+            reasoningContent.style.display = 'none';
+            toggle.classList.add('collapsed');
+        }
+    }
+
+    // 更新思考内容
+    function updateReasoningContent(content) {
+        if (currentReasoningContainer) {
+            const reasoningContentDiv = currentReasoningContainer.querySelector('.reasoning-content');
+            if (reasoningContentDiv) {
+                // 使用 innerHTML 渲染 Markdown
+                reasoningContentDiv.innerHTML = renderMarkdown(content);
+            }
+        }
+    }
+
+    // 显示思考容器（默认折叠）
+    function showReasoningContainer() {
+        if (currentReasoningContainer && !reasoningShown) {
+            currentReasoningContainer.style.display = 'block';
+            const reasoningContent = currentReasoningContainer.querySelector('.reasoning-content');
+            const toggle = currentReasoningContainer.querySelector('.reasoning-toggle');
+            if (reasoningContent && toggle) {
+                // 默认折叠
+                reasoningContent.style.display = 'none';
+                toggle.classList.add('collapsed');
+            }
+            reasoningShown = true;
+        }
+    }
+
+    // 渲染 Markdown 内容
+    function renderMarkdown(text) {
+        // 先处理 <think> 标签
+        text = processThinkTags(text);
+
+        if (typeof marked !== 'undefined') {
+            try {
+                return marked.parse(text);
+            } catch (e) {
+                console.error('Markdown 渲染失败:', e);
+                return text;
+            }
+        }
+        return text;
+    }
+
+    // 处理 <think> 标签
+    function processThinkTags(text) {
+        // 替换 <think>...</think> 为带样式的 div
+        return text.replace(/<think>([\s\S]*?)<\/think>/gi, function(match, content) {
+            // 转义 HTML 特殊字符，防止 XSS
+            const escapedContent = content
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+            return `<div class="think-tag">${escapedContent}</div>`;
+        });
+    }
+
+    // 添加错误消息
+    function addErrorMessage(error) {
+        const chatBox = document.getElementById('chatBox');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message ai-message error-message';
+        messageDiv.innerHTML = `<strong>错误:</strong> ${error}`;
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // 发送消息
+    async function sendMessage() {
+        const input = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const message = input.value.trim();
+
+        if (!message) return;
+
+        // 禁用输入
+        input.disabled = true;
+        sendBtn.disabled = true;
+
+        // 显示用户消息
+        addUserMessage(message);
+
+        // 清空输入框
+        input.value = '';
+
+        // 创建AI消息容器
+        currentAiMessage = createAiMessageContainer();
+
+        try {
+            // 使用 fetch 调用增强版流式接口
+            const response = await fetch('http://localhost:8080/api/chat/stream-enhanced', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: message,
+                    sessionId: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            // 读取流式响应
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let aiContent = '';
+            let reasoningContent = '';
+
+            const contentDiv = currentAiMessage.querySelector('.ai-content');
+
+            if (!contentDiv) {
+                console.error('contentDiv not found');
+                throw new Error('AI 内容容器未找到');
+            }
+
+            // 移除打字指示器
+            const typingIndicator = contentDiv.querySelector('.typing-indicator');
+            if (typingIndicator) {
+                typingIndicator.remove();
+            }
+
+            while (true) {
+                const {value, done} = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, {stream: true});
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // 保留不完整的行
+
+                for (const line of lines) {
+                    // 解析数据
+                    if (line.startsWith('data:')) {
+                        const data = line.substring(5).trim();
+
+                        if (data === '[DONE]') {
+                            break;
+                        }
+
+                        try {
+                            const chunk = JSON.parse(data);
+
+                            switch (chunk.type) {
+                                case 'reasoning':
+                                    // 处理思考内容
+                                    reasoningContent += chunk.data;
+                                    updateReasoningContent(reasoningContent);
+                                    showReasoningContainer();
+                                    console.log('收到思考内容，长度:', chunk.data.length);
+                                    break;
+
+                                case 'content':
+                                    // 处理回复内容
+                                    aiContent += chunk.data;
+                                    contentDiv.innerHTML = renderMarkdown(aiContent);
+                                    break;
+
+                                case 'done':
+                                    // 对话完成
+                                    if (chunk.sessionId) {
+                                        sessionId = chunk.sessionId;
+                                        document.getElementById('sessionInfo').textContent =
+                                            `会话ID: ${sessionId}`;
+                                        console.log('获取到会话ID:', sessionId);
+                                    }
+                                    break;
+
+                                case 'error':
+                                    // 处理错误
+                                    addErrorMessage(chunk.data);
+                                    break;
+                            }
+                        } catch (e) {
+                            console.error('解析数据失败', e, data);
+                        }
+
+                        // 自动滚动
+                        const chatBox = document.getElementById('chatBox');
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error('Error:', error);
+            addErrorMessage(error.message || '发生未知错误');
+        } finally {
+            // 恢复输入
+            input.disabled = false;
+            sendBtn.disabled = false;
+            input.focus();
+        }
+    }
+
+    // 页面加载完成后聚焦输入框
+    window.onload = () => {
+        document.getElementById('messageInput').focus();
+    };
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: spring-api-chat
+  profiles:
+    # 通过 Maven profile 动态设置激活的配置
+    # 使用 @ 符号包裹 Maven 属性，在构建时会被替换
+    active: @spring.profiles.active@
