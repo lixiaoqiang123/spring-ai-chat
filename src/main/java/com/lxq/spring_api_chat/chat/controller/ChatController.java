@@ -4,6 +4,8 @@ import com.lxq.spring_api_chat.chat.dto.ChatRequest;
 import com.lxq.spring_api_chat.chat.dto.ChatResponse;
 import com.lxq.spring_api_chat.chat.dto.StreamChunk;
 import com.lxq.spring_api_chat.chat.service.ChatService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
@@ -20,6 +22,8 @@ import java.time.Duration;
 @RequestMapping("/api/chat")
 @CrossOrigin(origins = "*")
 public class ChatController {
+
+    private static final Logger log = LoggerFactory.getLogger(ChatController.class);
 
     private final ChatService chatService;
 
@@ -41,13 +45,17 @@ public class ChatController {
     @PostMapping("/send")
     public ResponseEntity<ChatResponse> sendMessage(@RequestBody ChatRequest request) {
         try {
+            log.info("收到聊天请求 - 消息: {}, 会话ID: {}", request.message(), request.sessionId());
             ChatResponse response = chatService.chat(request);
+            log.info("聊天响应成功 - 会话ID: {}", response.getSessionId());
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
+            log.warn("聊天请求参数错误: {}", e.getMessage());
             // 返回 400 错误和错误消息
             return ResponseEntity.badRequest()
                     .body(new ChatResponse("错误: " + e.getMessage(), null));
         } catch (Exception e) {
+            log.error("聊天服务异常", e);
             // 返回 500 错误和错误消息
             return ResponseEntity.internalServerError()
                     .body(new ChatResponse("服务器错误: " + e.getMessage(), null));
@@ -63,13 +71,17 @@ public class ChatController {
     @GetMapping("/ask")
     public ResponseEntity<ChatResponse> ask(@RequestParam String message) {
         try {
+            log.info("收到简单聊天请求 - 消息: {}", message);
             ChatRequest request = new ChatRequest(message, null);
             ChatResponse response = chatService.chat(request);
+            log.info("简单聊天响应成功 - 会话ID: {}", response.getSessionId());
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
+            log.warn("简单聊天请求参数错误: {}", e.getMessage());
             return ResponseEntity.badRequest()
                     .body(new ChatResponse("错误: " + e.getMessage(), null));
         } catch (Exception e) {
+            log.error("简单聊天服务异常", e);
             return ResponseEntity.internalServerError()
                     .body(new ChatResponse("服务器错误: " + e.getMessage(), null));
         }
@@ -104,7 +116,7 @@ public class ChatController {
         try {
             // 获取或生成会话ID
             String sessionId = chatService.getOrGenerateSessionId(request);
-            System.out.println("增强版流式对话 - 会话ID: " + sessionId + ", 消息: " + request.message());
+            log.info("增强版流式对话 - 会话ID: {}, 消息: {}", sessionId, request.message());
 
             // 创建包含正确 sessionId 的新请求对象
             ChatRequest requestWithSession = new ChatRequest(request.message(), sessionId);
@@ -120,16 +132,20 @@ public class ChatController {
                             .data(chunk)          // 发送完整的 StreamChunk 对象
                             .build())
                     // 错误处理:捕获流中的异常并返回错误事件
-                    .onErrorResume(error -> Flux.just(
-                            ServerSentEvent.<StreamChunk>builder()
-                                    .id(String.valueOf(System.currentTimeMillis()))
-                                    .event("error")
-                                    .data(StreamChunk.error("错误: " + error.getMessage()))
-                                    .build()
-                    ))
+                    .onErrorResume(error -> {
+                        log.error("增强版流式对话异常 - 会话ID: {}", sessionId, error);
+                        return Flux.just(
+                                ServerSentEvent.<StreamChunk>builder()
+                                        .id(String.valueOf(System.currentTimeMillis()))
+                                        .event("error")
+                                        .data(StreamChunk.error("错误: " + error.getMessage()))
+                                        .build()
+                        );
+                    })
                     // 设置超时时间
                     .timeout(Duration.ofMinutes(5));
         } catch (Exception e) {
+            log.error("增强版流式对话启动失败", e);
             // 处理同步异常,返回错误事件流
             return Flux.just(
                     ServerSentEvent.<StreamChunk>builder()
@@ -154,7 +170,7 @@ public class ChatController {
         try {
             // 获取或生成会话ID
             String sessionId = chatService.getOrGenerateSessionId(request);
-            System.out.println("流式对话 - 会话ID: " + sessionId + ", 消息: " + request.message());
+            log.info("流式对话 - 会话ID: {}, 消息: {}", sessionId, request.message());
 
             // 创建包含正确 sessionId 的新请求对象
             // 这样确保 Controller 和 Service 使用相同的 sessionId
@@ -180,16 +196,20 @@ public class ChatController {
                                     .build()
                     ))
                     // 错误处理:捕获流中的异常并返回错误事件
-                    .onErrorResume(error -> Flux.just(
-                            ServerSentEvent.<String>builder()
-                                    .id(String.valueOf(System.currentTimeMillis()))
-                                    .event("error")
-                                    .data("错误: " + error.getMessage())
-                                    .build()
-                    ))
+                    .onErrorResume(error -> {
+                        log.error("流式对话异常 - 会话ID: {}", sessionId, error);
+                        return Flux.just(
+                                ServerSentEvent.<String>builder()
+                                        .id(String.valueOf(System.currentTimeMillis()))
+                                        .event("error")
+                                        .data("错误: " + error.getMessage())
+                                        .build()
+                        );
+                    })
                     // 设置心跳,防止连接超时(每30秒发送一次心跳)
                     .timeout(Duration.ofMinutes(5));
         } catch (Exception e) {
+            log.error("流式对话启动失败", e);
             // 处理同步异常,返回错误事件流
             return Flux.just(
                     ServerSentEvent.<String>builder()
@@ -224,9 +244,12 @@ public class ChatController {
     @DeleteMapping("/memory/{sessionId}")
     public ResponseEntity<String> clearMemory(@PathVariable String sessionId) {
         try {
+            log.info("清除会话记忆 - 会话ID: {}", sessionId);
             chatService.clearMemory(sessionId);
+            log.info("会话记忆清除成功 - 会话ID: {}", sessionId);
             return ResponseEntity.ok("会话 " + sessionId + " 的记忆已清除");
         } catch (Exception e) {
+            log.error("清除会话记忆失败 - 会话ID: {}", sessionId, e);
             return ResponseEntity.internalServerError()
                     .body("清除记忆失败: " + e.getMessage());
         }
@@ -241,9 +264,12 @@ public class ChatController {
     @DeleteMapping("/memory/all")
     public ResponseEntity<String> clearAllMemory() {
         try {
+            log.warn("清除所有会话记忆");
             chatService.clearAllMemory();
+            log.info("所有会话记忆清除成功");
             return ResponseEntity.ok("所有会话的记忆已清除");
         } catch (Exception e) {
+            log.error("清除所有会话记忆失败", e);
             return ResponseEntity.internalServerError()
                     .body("清除记忆失败: " + e.getMessage());
         }
