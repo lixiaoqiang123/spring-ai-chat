@@ -3,14 +3,21 @@ package com.lxq.spring_api_chat.chat.service;
 import com.lxq.spring_api_chat.chat.dto.ChatRequest;
 import com.lxq.spring_api_chat.chat.dto.ChatResponse;
 import com.lxq.spring_api_chat.chat.dto.StreamChunk;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 聊天服务类
@@ -19,18 +26,25 @@ import java.util.UUID;
 @Service
 public class ChatService {
 
+    private static final Logger log = LoggerFactory.getLogger(ChatService.class);
     private final ChatClient chatClient;
     private final ChatMemory chatMemory;
+    private final VectorStore vectorStore;
+    private final ChatModel chatModel;
 
     /**
-     * 构造函数注入 ChatModel 和 ChatMemory
+     * 构造函数注入 ChatModel、ChatMemory 和 VectorStore
      * 创建带有记忆功能的 ChatClient
      *
      * @param chatModel Spring AI 提供的聊天模型
      * @param chatMemory 聊天记忆存储
+     * @param vectorStore 向量存储，用于RAG功能
      */
-    public ChatService(ChatModel chatModel, ChatMemory chatMemory) {
+    public ChatService(ChatModel chatModel, ChatMemory chatMemory, VectorStore vectorStore) {
         this.chatMemory = chatMemory;
+        this.vectorStore = vectorStore;
+        this.chatModel = chatModel;
+
         // 创建带有 Memory Advisor 的 ChatClient
         // MessageChatMemoryAdvisor 会自动管理对话历史的存储和检索
         MessageChatMemoryAdvisor memoryAdvisor = MessageChatMemoryAdvisor.builder(chatMemory)
@@ -228,5 +242,144 @@ public class ChatService {
         // InMemoryChatMemory 没有直接的 clearAll 方法
         // 如果需要，可以重新创建 ChatMemory 实例
         System.out.println("警告：清除所有记忆需要重启应用或重新注入 ChatMemory");
+    }
+
+    /**
+     * RAG增强对话 - 同步版本（手动实现）
+     * 结合向量检索和对话记忆，基于知识库内容生成答案
+     *
+     * @param request 聊天请求
+     * @param topK 检索的文档数量，默认5
+     * @param similarityThreshold 相似度阈值，默认0.7
+     * @return 聊天响应
+     */
+    public ChatResponse chatWithRag(ChatRequest request, int topK, double similarityThreshold) {
+        // 获取或生成会话ID
+        final String sessionId = getOrGenerateSessionId(request);
+        System.out.println("ChatService.chatWithRag - 使用会话ID: " + sessionId + ", 消息: " + request.message());
+
+        // 1. 检索相关文档
+        List<Document> documents = vectorStore.similaritySearch(
+            SearchRequest.builder()
+                .query(request.message())
+                .topK(topK)
+                .similarityThreshold(similarityThreshold)
+                .build()
+        );
+
+        // 2. 构建上下文
+        String context = buildContext(documents);
+
+        // 3. 构建增强的Prompt
+        String enhancedPrompt;
+        if (!documents.isEmpty()) {
+            enhancedPrompt = String.format("""
+                请基于以下上下文信息回答问题。如果上下文中没有相关信息，请明确告知用户。
+
+                上下文信息：
+                %s
+
+                用户问题：%s
+                """, context, request.message());
+        } else {
+            enhancedPrompt = String.format("""
+                注意：向量数据库中未找到与问题相关的文档。
+
+                用户问题：%s
+
+                请根据你的知识回答，并告知用户这不是基于文档库的回答。
+                """, request.message());
+        }
+        log.info("context:{}",context);
+        log.info("enhancedPrompt:{}",enhancedPrompt);
+        // 4. 调用AI模型（带记忆）
+        String reply = chatClient.prompt()
+                .user(enhancedPrompt)
+                .advisors(advisor -> advisor
+                        .param(ChatMemory.CONVERSATION_ID, sessionId)
+                )
+                .call()
+                .content();
+
+        // 构造并返回响应
+        return new ChatResponse(reply, sessionId);
+    }
+
+    /**
+     * RAG增强流式对话（手动实现）
+     * 结合向量检索和对话记忆，以流式方式返回基于知识库内容的答案
+     *
+     * @param request 聊天请求
+     * @param topK 检索的文档数量，默认5
+     * @param similarityThreshold 相似度阈值，默认0.7
+     * @return AI回复内容的响应式流
+     */
+    public Flux<String> chatWithRagStream(ChatRequest request, int topK, double similarityThreshold) {
+        // 获取或生成会话ID
+        final String sessionId = getOrGenerateSessionId(request);
+        System.out.println("ChatService.chatWithRagStream - 使用会话ID: " + sessionId + ", 消息: " + request.message());
+
+        // 1. 检索相关文档
+        List<Document> documents = vectorStore.similaritySearch(
+            SearchRequest.builder()
+                .query(request.message())
+                .topK(topK)
+                .similarityThreshold(similarityThreshold)
+                .build()
+        );
+
+        // 2. 构建上下文
+        String context = buildContext(documents);
+
+        // 3. 构建增强的Prompt
+        String enhancedPrompt;
+        if (!documents.isEmpty()) {
+            enhancedPrompt = String.format("""
+                请基于以下上下文信息回答问题。如果上下文中没有相关信息，请明确告知用户。
+
+                上下文信息：
+                %s
+
+                用户问题：%s
+                """, context, request.message());
+        } else {
+            enhancedPrompt = String.format("""
+                注意：向量数据库中未找到与问题相关的文档。
+
+                用户问题：%s
+
+                请根据你的知识回答，并告知用户这不是基于文档库的回答。
+                """, request.message());
+        }
+
+        // 4. 使用流式调用
+        return chatClient.prompt()
+                .user(enhancedPrompt)
+                .advisors(advisor -> advisor
+                        .param(ChatMemory.CONVERSATION_ID, sessionId)
+                )
+                .stream()
+                .content()
+                // 错误处理
+                .doOnError(error ->
+                    System.err.println("RAG流式对话发生错误: " + error.getMessage())
+                )
+                // 完成时的日志
+                .doOnComplete(() ->
+                    System.out.println("RAG流式对话完成 - 会话ID: " + sessionId + ", 消息: " + request.message())
+                );
+    }
+
+    /**
+     * 构建上下文字符串
+     * 将检索到的文档格式化为上下文
+     */
+    private String buildContext(List<Document> documents) {
+        return documents.stream()
+            .map(doc -> {
+                String source = doc.getMetadata().getOrDefault("source", "未知来源").toString();
+                return String.format("[来源: %s]\n%s", source, doc.getText());
+            })
+            .collect(Collectors.joining("\n\n---\n\n"));
     }
 }

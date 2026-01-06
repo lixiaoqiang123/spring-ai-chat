@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.lang.NonNull;
+import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.util.UUID;
@@ -15,6 +16,7 @@ import java.util.UUID;
  * 为每个HTTP请求生成唯一的traceId，并将其放入MDC中
  * 这样可以在日志中追踪整个请求的处理过程
  */
+@Component
 public class MdcInterceptor implements HandlerInterceptor {
 
     private static final Logger log = LoggerFactory.getLogger(MdcInterceptor.class);

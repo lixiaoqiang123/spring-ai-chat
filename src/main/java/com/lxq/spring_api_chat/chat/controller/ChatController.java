@@ -274,4 +274,146 @@ public class ChatController {
                     .body("清除记忆失败: " + e.getMessage());
         }
     }
+
+    /**
+     * RAG增强对话接口 - 基于知识库内容生成答案
+     * 结合向量检索和对话记忆，提供准确的基于文档的回答
+     *
+     * @param request 聊天请求，包含用户消息和可选的会话ID
+     * @param topK 检索的文档数量，默认5
+     * @param similarityThreshold 相似度阈值（0.0-1.0），默认0.7
+     * @return 聊天响应，包含基于知识库的AI回复
+     */
+    @PostMapping("/rag")
+    public ResponseEntity<ChatResponse> chatWithRag(
+            @RequestBody ChatRequest request,
+            @RequestParam(defaultValue = "5") int topK,
+            @RequestParam(defaultValue = "0.7") double similarityThreshold
+    ) {
+        try {
+            log.info("收到RAG聊天请求 - 消息: {}, 会话ID: {}, topK: {}, threshold: {}",
+                    request.message(), request.sessionId(), topK, similarityThreshold);
+
+            // 参数验证
+            if (topK <= 0 || topK > 50) {
+                log.warn("RAG请求参数错误 - topK超出范围: {}", topK);
+                return ResponseEntity.badRequest()
+                        .body(new ChatResponse("错误: topK必须在1-50之间", null));
+            }
+            if (similarityThreshold < 0.0 || similarityThreshold > 1.0) {
+                log.warn("RAG请求参数错误 - similarityThreshold超出范围: {}", similarityThreshold);
+                return ResponseEntity.badRequest()
+                        .body(new ChatResponse("错误: similarityThreshold必须在0.0-1.0之间", null));
+            }
+
+            // 调用RAG增强的聊天服务
+            ChatResponse response = chatService.chatWithRag(request, topK, similarityThreshold);
+            log.info("RAG聊天响应成功 - 会话ID: {}", response.getSessionId());
+            return ResponseEntity.ok(response);
+
+        } catch (IllegalArgumentException e) {
+            log.warn("RAG聊天请求参数错误: {}", e.getMessage());
+            return ResponseEntity.badRequest()
+                    .body(new ChatResponse("错误: " + e.getMessage(), null));
+        } catch (Exception e) {
+            log.error("RAG聊天服务异常", e);
+            return ResponseEntity.internalServerError()
+                    .body(new ChatResponse("服务器错误: " + e.getMessage(), null));
+        }
+    }
+
+    /**
+     * RAG增强流式对话接口 - Server-Sent Events (SSE)
+     * 以流式方式返回基于知识库内容的AI回答
+     * 结合向量检索和对话记忆
+     *
+     * @param request 聊天请求，包含用户消息和可选的会话ID
+     * @param topK 检索的文档数量，默认5
+     * @param similarityThreshold 相似度阈值（0.0-1.0），默认0.7
+     * @return SSE流，每个事件包含一个文本片段
+     */
+    @PostMapping(value = "/rag-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> chatWithRagStream(
+            @RequestBody ChatRequest request,
+            @RequestParam(defaultValue = "5") int topK,
+            @RequestParam(defaultValue = "0.7") double similarityThreshold
+    ) {
+        try {
+            // 参数验证
+            if (topK <= 0 || topK > 50) {
+                log.warn("RAG流式请求参数错误 - topK超出范围: {}", topK);
+                return Flux.just(
+                        ServerSentEvent.<String>builder()
+                                .id(String.valueOf(System.currentTimeMillis()))
+                                .event("error")
+                                .data("错误: topK必须在1-50之间")
+                                .build()
+                );
+            }
+            if (similarityThreshold < 0.0 || similarityThreshold > 1.0) {
+                log.warn("RAG流式请求参数错误 - similarityThreshold超出范围: {}", similarityThreshold);
+                return Flux.just(
+                        ServerSentEvent.<String>builder()
+                                .id(String.valueOf(System.currentTimeMillis()))
+                                .event("error")
+                                .data("错误: similarityThreshold必须在0.0-1.0之间")
+                                .build()
+                );
+            }
+
+            // 获取或生成会话ID
+            String sessionId = chatService.getOrGenerateSessionId(request);
+            log.info("RAG流式对话 - 会话ID: {}, topK: {}, threshold: {}, 消息: {}",
+                    sessionId, topK, similarityThreshold, request.message());
+
+            // 创建包含正确 sessionId 的新请求对象
+            ChatRequest requestWithSession = new ChatRequest(request.message(), sessionId);
+
+            // 调用RAG流式服务
+            Flux<String> contentStream = chatService.chatWithRagStream(
+                requestWithSession,
+                topK,
+                similarityThreshold
+            );
+
+            // 将内容流转换为SSE格式
+            return contentStream
+                    .map(content -> ServerSentEvent.<String>builder()
+                            .id(String.valueOf(System.currentTimeMillis()))
+                            .event("message")
+                            .data(content)
+                            .build())
+                    // 在流结束时发送完成事件
+                    .concatWith(Flux.just(
+                            ServerSentEvent.<String>builder()
+                                    .id(String.valueOf(System.currentTimeMillis()))
+                                    .event("done")
+                                    .data("{\"sessionId\":\"" + sessionId + "\"}")
+                                    .build()
+                    ))
+                    // 错误处理
+                    .onErrorResume(error -> {
+                        log.error("RAG流式对话异常 - 会话ID: {}", sessionId, error);
+                        return Flux.just(
+                                ServerSentEvent.<String>builder()
+                                        .id(String.valueOf(System.currentTimeMillis()))
+                                        .event("error")
+                                        .data("错误: " + error.getMessage())
+                                        .build()
+                        );
+                    })
+                    // 设置超时
+                    .timeout(Duration.ofMinutes(5));
+
+        } catch (Exception e) {
+            log.error("RAG流式对话启动失败", e);
+            return Flux.just(
+                    ServerSentEvent.<String>builder()
+                            .id(String.valueOf(System.currentTimeMillis()))
+                            .event("error")
+                            .data("服务器错误: " + e.getMessage())
+                            .build()
+            );
+        }
+    }
 }

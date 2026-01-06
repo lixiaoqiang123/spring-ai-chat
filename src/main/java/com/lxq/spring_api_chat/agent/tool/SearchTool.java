@@ -1,26 +1,23 @@
 package com.lxq.spring_api_chat.agent.tool;
 
+import com.lxq.spring_api_chat.rag.dto.RetrievalResult;
+import com.lxq.spring_api_chat.rag.service.DocumentRetrievalService;
+import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
 
 /**
- * 搜索工具
- * 模拟搜索功能（实际项目中应该调用真实的搜索API或RAG系统）
+ * 搜索工具 - RAG版本
+ * 使用向量检索技术从知识库中搜索相关信息
  */
 @Component
 public class SearchTool implements AgentTool {
 
-    // 模拟知识库
-    private static final Map<String, String> KNOWLEDGE_BASE = new HashMap<>();
+    private final DocumentRetrievalService retrievalService;
 
-    static {
-        KNOWLEDGE_BASE.put("spring ai", "Spring AI 是 Spring 生态系统中用于构建 AI 应用的框架，提供了统一的 API 来集成各种 AI 模型。");
-        KNOWLEDGE_BASE.put("java 21", "Java 21 是 LTS 版本，引入了虚拟线程(Virtual Threads)、记录模式(Record Patterns)等重要特性。");
-        KNOWLEDGE_BASE.put("agent", "Agent 是具有自主决策能力的智能体，能够感知环境、制定计划并执行行动来完成目标。");
-        KNOWLEDGE_BASE.put("rag", "RAG(Retrieval-Augmented Generation)是检索增强生成技术，通过检索相关文档来增强大模型的回答质量。");
-        KNOWLEDGE_BASE.put("prompt engineering", "Prompt Engineering 是设计和优化提示词的技术，用于引导大模型生成更准确、更有用的回答。");
+    public SearchTool(DocumentRetrievalService retrievalService) {
+        this.retrievalService = retrievalService;
     }
 
     @Override
@@ -30,26 +27,59 @@ public class SearchTool implements AgentTool {
 
     @Override
     public String getDescription() {
-        return "在知识库中搜索相关信息。可以搜索技术概念、定义和说明。";
+        return "在知识库中搜索相关信息。使用向量检索技术，能够理解语义并返回最相关的文档内容。";
     }
 
     @Override
     public String getParameterDescription() {
-        return "query: 要搜索的关键词或问题，例如: 'Spring AI', 'Java 21', 'Agent'";
+        return "query: 要搜索的问题或关键词，例如: 'Spring AI是什么', 'RAG技术原理', 'Agent如何工作'";
     }
 
     @Override
     public String execute(String input) {
-        String query = input.trim().toLowerCase();
+        String query = input.trim();
 
-        // 模糊匹配
-        for (Map.Entry<String, String> entry : KNOWLEDGE_BASE.entrySet()) {
-            if (query.contains(entry.getKey()) || entry.getKey().contains(query)) {
-                return String.format("搜索结果: %s", entry.getValue());
-            }
+        if (query.isEmpty()) {
+            return "错误: 搜索查询不能为空";
         }
 
-        return String.format("未找到关于'%s'的相关信息。可搜索的主题包括: %s",
-                input, String.join(", ", KNOWLEDGE_BASE.keySet()));
+        try {
+            // 使用RAG检索，返回Top 3最相关的文档
+            RetrievalResult result = retrievalService.retrieve(query, 3, 0.7);
+
+            if (!result.success()) {
+                return String.format("搜索失败: %s", result.errorMessage());
+            }
+
+            if (result.documents().isEmpty()) {
+                return String.format("未找到关于'%s'的相关信息。\n提示: 可能需要先索引相关文档到知识库。", query);
+            }
+
+            // 格式化检索结果
+            StringBuilder response = new StringBuilder();
+            response.append(String.format("找到 %d 条相关信息:\n\n", result.count()));
+
+            List<Document> docs = result.documents();
+            for (int i = 0; i < docs.size(); i++) {
+                Document doc = docs.get(i);
+                String source = doc.getMetadata().getOrDefault("source", "未知").toString();
+                String content = doc.getText();
+
+                // 限制内容长度，避免返回过长的文本
+                if (content.length() > 300) {
+                    content = content.substring(0, 300) + "...";
+                }
+
+                response.append(String.format("[%d] 来源: %s\n%s\n\n",
+                    i + 1, source, content));
+            }
+
+            response.append(String.format("(检索耗时: %dms)", result.duration()));
+
+            return response.toString();
+
+        } catch (Exception e) {
+            return String.format("搜索过程中发生错误: %s", e.getMessage());
+        }
     }
 }
